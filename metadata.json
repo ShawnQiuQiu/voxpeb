@@ -1,0 +1,5 @@
+{
+  "name": "Voxpeb - AI Embodied Tutor Platform",
+  "description": "A platform to customize and generate physical AI English coaches. Create 3D voxel shells and custom firmware personalities for M5Stack/Stack-chan hardware.",
+  "requestFramePermissions": []
+}
