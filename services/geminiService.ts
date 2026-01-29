@@ -9,11 +9,12 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
  */
 export const generateRobotPreview = async (prompt: string): Promise<string> => {
   try {
-    const fullPrompt = `A high-quality cute voxel art 3D render of a small robot character. 
-    Style: Minecraft, MagicaVoxel. 
-    The robot is suitable for an M5Stack Core2 display face.
-    Description: ${prompt}. 
-    White background, studio lighting, isometric view.`;
+    const fullPrompt = `Design a 3D printable casing for an M5Stack Core S3 (54mm x 54mm square module).
+    The casing should look like a cute pocket monster or Pokemon-style character.
+    CRITICAL REQUIREMENT: The character MUST incorporate a clearly visible square 54mm x 54mm screen frame/cavity on its belly or face to embed the device.
+    Style: Voxel Art, MagicaVoxel, Minecraft aesthetic. Cute, colorful, toy-like.
+    Character Description: ${prompt}. 
+    Render context: White background, studio lighting, isometric view, high definition 3D render.`;
 
     const response = await ai.models.generateImages({
       model: 'imagen-4.0-generate-001', // Using Imagen for better adherence to specific art styles
