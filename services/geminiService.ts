@@ -1,7 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { FirmwareConfig } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to get the AI client safely. 
+// We initialize it lazily so the app doesn't crash on load if the key is missing.
+const getAiClient = () => {
+  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+};
 
 /**
  * Generates a Voxel/Minecraft style 2D concept image for the robot.
@@ -9,6 +13,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
  */
 export const generateRobotPreview = async (prompt: string): Promise<string> => {
   try {
+    const ai = getAiClient();
     const fullPrompt = `Design a 3D printable casing for an M5Stack Core S3 (54mm x 54mm square module).
     The casing should look like a cute pocket monster or Pokemon-style character.
     CRITICAL REQUIREMENT: The character MUST incorporate a clearly visible square 54mm x 54mm screen frame/cavity on its belly or face to embed the device.
@@ -41,6 +46,7 @@ export const generateRobotPreview = async (prompt: string): Promise<string> => {
  */
 export const generateFirmwareSystemPrompt = async (config: FirmwareConfig): Promise<string> => {
   try {
+    const ai = getAiClient();
     const prompt = `
     You are an expert Prompt Engineer for an AI Education Agent.
     
