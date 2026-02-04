@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import Header from './components/Header';
 import Hero from './components/Hero';
 import ModelGenerator from './components/ModelGenerator';
@@ -37,6 +38,8 @@ const App: React.FC = () => {
           <p>{t('footer_power')}</p>
         </div>
       </footer>
+      
+      <SpeedInsights />
     </div>
   );
 };
