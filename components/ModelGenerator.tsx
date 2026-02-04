@@ -1,14 +1,25 @@
 import React, { useState } from 'react';
-import { Box, Download, Loader2, Sparkles, Printer, RefreshCw, Layers, Info } from 'lucide-react';
+import { Box, Download, Loader2, Sparkles, Printer, RefreshCw, Layers, Info, Cloud, Check } from 'lucide-react';
 import { generateRobotPreview } from '../services/geminiService';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabaseClient';
 
-const ModelGenerator: React.FC = () => {
+interface Props {
+  onOpenAuth: () => void;
+}
+
+const ModelGenerator: React.FC<Props> = ({ onOpenAuth }) => {
   const { t } = useLanguage();
+  const { user } = useAuth();
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // Save State
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
@@ -16,6 +27,7 @@ const ModelGenerator: React.FC = () => {
     setIsGenerating(true);
     setError(null);
     setGeneratedImage(null);
+    setIsSaved(false);
 
     try {
       const imageUrl = await generateRobotPreview(prompt);
@@ -27,54 +39,59 @@ const ModelGenerator: React.FC = () => {
     }
   };
 
+  const handleSaveToLibrary = async () => {
+    if (!user) {
+      onOpenAuth();
+      return;
+    }
+    if (!generatedImage) return;
+
+    setIsSaving(true);
+    try {
+      const { error } = await supabase.from('user_models').insert({
+        user_id: user.id,
+        prompt: prompt,
+        image_data: generatedImage // Note: Storing large base64 in DB is not ideal for prod, but fine for MVP
+      });
+
+      if (error) throw error;
+      setIsSaved(true);
+    } catch (err) {
+      console.error('Save error:', err);
+      setError("Failed to save to library.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   // Helper to generate a valid ASCII STL string for a simple box (M5Stack Case Placeholder)
   const generatePlaceholderSTL = (name: string) => {
     // M5Stack Core S3 is approx 54x54mm. Let's make a case 60x60x15mm
     const w = 60 / 2; // Width
     const h = 60 / 2; // Height
     const d = 15 / 2; // Depth
-
-    // 8 vertices for a cube
+    // ... (Code shortened for brevity, logical equivalent to previous version) ...
+    // Note: In a full implementation, this should remain identical to previous STL logic.
     const v = [
       [-w, -h, -d], [w, -h, -d], [w, h, -d], [-w, h, -d], // Back face z=-d
       [-w, -h, d], [w, -h, d], [w, h, d], [-w, h, d]      // Front face z=d
     ];
-
-    // 12 triangles (indices)
     const indices = [
-      [0, 2, 1], [0, 3, 2], // Back
-      [4, 5, 6], [4, 6, 7], // Front
-      [0, 7, 3], [0, 4, 7], // Left
-      [1, 2, 6], [1, 6, 5], // Right
-      [3, 7, 6], [3, 6, 2], // Top
-      [0, 1, 5], [0, 5, 4]  // Bottom
+      [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], 
+      [0, 7, 3], [0, 4, 7], [1, 2, 6], [1, 6, 5], 
+      [3, 7, 6], [3, 6, 2], [0, 1, 5], [0, 5, 4]
     ];
-
     let stl = `solid ${name.replace(/\s+/g, '_')}\n`;
-    
     indices.forEach(face => {
-      const v1 = v[face[0]];
-      const v2 = v[face[1]];
-      const v3 = v[face[2]];
-      
-      // Simple normal (not calculated for brevity, many viewers auto-calc)
-      stl += `facet normal 0 0 0\n`;
-      stl += `  outer loop\n`;
-      stl += `    vertex ${v1[0]} ${v1[1]} ${v1[2]}\n`;
-      stl += `    vertex ${v2[0]} ${v2[1]} ${v2[2]}\n`;
-      stl += `    vertex ${v3[0]} ${v3[1]} ${v3[2]}\n`;
-      stl += `  endloop\n`;
-      stl += `endfacet\n`;
+      const v1 = v[face[0]]; const v2 = v[face[1]]; const v3 = v[face[2]];
+      stl += `facet normal 0 0 0\n  outer loop\n    vertex ${v1[0]} ${v1[1]} ${v1[2]}\n    vertex ${v2[0]} ${v2[1]} ${v2[2]}\n    vertex ${v3[0]} ${v3[1]} ${v3[2]}\n  endloop\nendfacet\n`;
     });
-
     stl += `endsolid ${name.replace(/\s+/g, '_')}`;
     return stl;
   };
 
   const handleDownload = () => {
-    // Generate real STL content
     const stlContent = generatePlaceholderSTL("Voxpeb_M5_Base");
-    
     const element = document.createElement("a");
     const file = new Blob([stlContent], {type: 'model/stl'});
     element.href = URL.createObjectURL(file);
@@ -173,12 +190,24 @@ const ModelGenerator: React.FC = () => {
                 alt="Generated Robot" 
                 className="w-full h-full object-contain rounded-lg shadow-lg" 
               />
-              <div className="absolute bottom-6 flex gap-4">
+              <div className="absolute bottom-6 flex flex-wrap justify-center gap-3 w-full px-4">
                 <button 
                   onClick={handleGenerate}
                   className="bg-white text-slate-700 px-4 py-2 rounded-lg font-medium shadow-md hover:bg-slate-50 flex items-center gap-2"
                 >
                   <RefreshCw size={16} /> {t('retry')}
+                </button>
+                <button 
+                  onClick={handleSaveToLibrary}
+                  disabled={isSaving || isSaved}
+                  className={`px-4 py-2 rounded-lg font-medium shadow-md flex items-center gap-2 transition-colors ${
+                    isSaved 
+                    ? 'bg-green-100 text-green-700' 
+                    : 'bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {isSaving ? <Loader2 className="animate-spin" size={16} /> : isSaved ? <Check size={16} /> : <Cloud size={16} />}
+                  {isSaved ? 'Saved' : 'Save'}
                 </button>
                 <button 
                   onClick={handleDownload}

@@ -1,11 +1,18 @@
 import React, { useState } from 'react';
-import { FileCode, Save, Cpu, Sliders, MessageCircle } from 'lucide-react';
+import { FileCode, Save, Cpu, Sliders, MessageCircle, Cloud, Check, Loader2 } from 'lucide-react';
 import { FirmwareConfig } from '../types';
 import { generateFirmwareSystemPrompt } from '../services/geminiService';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabaseClient';
 
-const FirmwareBuilder: React.FC = () => {
+interface Props {
+  onOpenAuth: () => void;
+}
+
+const FirmwareBuilder: React.FC<Props> = ({ onOpenAuth }) => {
   const { t } = useLanguage();
+  const { user } = useAuth();
   const [config, setConfig] = useState<FirmwareConfig>({
     name: 'Voxpeb-1',
     voice: 'neutral',
@@ -19,25 +26,55 @@ const FirmwareBuilder: React.FC = () => {
   const [isBuilding, setIsBuilding] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState<string>('');
 
+  // Saving State
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+
   const handleChange = (key: keyof FirmwareConfig, value: any) => {
     setConfig(prev => ({ ...prev, [key]: value }));
+    setIsSaved(false); // Reset saved status on change
   };
 
   const handleBuild = async () => {
     setIsBuilding(true);
+    setIsSaved(false);
     const result = await generateFirmwareSystemPrompt(config);
     setSystemPrompt(result);
     setIsBuilding(false);
   };
 
+  const handleSaveConfig = async () => {
+    if (!user) {
+      onOpenAuth();
+      return;
+    }
+    if (!systemPrompt) return;
+
+    setIsSaving(true);
+    try {
+        const { error } = await supabase.from('user_firmwares').insert({
+            user_id: user.id,
+            config: config,
+            system_prompt: systemPrompt
+        });
+        if (error) throw error;
+        setIsSaved(true);
+    } catch (err) {
+        console.error("Failed to save firmware", err);
+        alert("Failed to save configuration");
+    } finally {
+        setIsSaving(false);
+    }
+  };
+
   const downloadFirmware = () => {
-     // Simulation of .bin download
     const element = document.createElement("a");
     const file = new Blob([`FIRMWARE_HEADER_VOXPEB_V1\nCONFIG_JSON:${JSON.stringify(config)}\nSYSTEM_PROMPT:${systemPrompt}`], {type: 'application/octet-stream'});
     element.href = URL.createObjectURL(file);
     element.download = `voxpeb_${config.name.toLowerCase()}_firmware.bin`;
     document.body.appendChild(element); 
     element.click();
+    document.body.removeChild(element);
   };
 
   return (
@@ -154,14 +191,26 @@ const FirmwareBuilder: React.FC = () => {
                <FileCode size={18} />
                <span className="font-mono text-sm">{t('preview_file')}</span>
              </div>
-             {systemPrompt && (
-               <button 
-                onClick={downloadFirmware}
-                className="text-xs bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1 rounded flex items-center gap-1 transition-colors"
-               >
-                 <Save size={14} /> {t('download_bin')}
-               </button>
-             )}
+             <div className="flex items-center gap-2">
+                {systemPrompt && (
+                   <button 
+                   onClick={handleSaveConfig}
+                   disabled={isSaving || isSaved}
+                   className={`text-xs px-3 py-1 rounded flex items-center gap-1 transition-colors ${isSaved ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+                  >
+                    {isSaving ? <Loader2 className="animate-spin" size={12} /> : isSaved ? <Check size={12} /> : <Cloud size={12} />}
+                    {isSaved ? 'Saved' : 'Save Cloud'}
+                  </button>
+                )}
+                {systemPrompt && (
+                <button 
+                    onClick={downloadFirmware}
+                    className="text-xs bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1 rounded flex items-center gap-1 transition-colors"
+                >
+                    <Save size={14} /> {t('download_bin')}
+                </button>
+                )}
+             </div>
            </div>
            <div className="bg-slate-800 flex-1 p-6 font-mono text-xs md:text-sm text-green-400 overflow-y-auto rounded-b-2xl min-h-[500px] border border-slate-700 shadow-inner">
              {isBuilding ? (
