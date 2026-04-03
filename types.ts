@@ -18,4 +18,19 @@ export enum AppSection {
   HOME = 'HOME',
   MODEL_GEN = 'MODEL_GEN',
   FIRMWARE_GEN = 'FIRMWARE_GEN',
+  DASHBOARD = 'DASHBOARD',
+}
+
+export interface SpeakingSession {
+  id: string;
+  date: string;
+  durationMinutes: number;
+  overallScore: number;
+  metrics: {
+    pronunciation: number;
+    fluency: number;
+    vocabulary: number;
+    grammar: number;
+  };
+  feedback: string;
 }

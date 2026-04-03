@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, FileCode, Home, Globe, LogIn, User as UserIcon, LogOut } from 'lucide-react';
+import { Box, FileCode, Home, Globe, LogIn, User as UserIcon, LogOut, Activity } from 'lucide-react';
 import { AppSection } from '../types';
 import { useLanguage, Language } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -57,6 +57,15 @@ const Header: React.FC<HeaderProps> = ({ currentSection, onNavigate, onOpenAuth 
               <FileCode size={18} />
               <span className="hidden sm:inline">{t('nav_brain')}</span>
             </button>
+            {user && (
+              <button 
+                onClick={() => onNavigate(AppSection.DASHBOARD)}
+                className={navItemClass(AppSection.DASHBOARD)}
+              >
+                <Activity size={18} />
+                <span className="hidden sm:inline">{t('nav_progress')}</span>
+              </button>
+            )}
           </nav>
           
           {/* Language Selector */}

@@ -1,17 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import Hero from './components/Hero';
 import ModelGenerator from './components/ModelGenerator';
 import FirmwareBuilder from './components/FirmwareBuilder';
+import Dashboard from './components/Dashboard';
 import AuthModal from './components/AuthModal';
 import { AppSection } from './types';
 import { useLanguage } from './contexts/LanguageContext';
+import { useAuth } from './contexts/AuthContext';
 import { SpeedInsights } from "@vercel/speed-insights/react";
 
 const App: React.FC = () => {
   const [currentSection, setCurrentSection] = useState<AppSection>(AppSection.HOME);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const { t } = useLanguage();
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (currentSection === AppSection.DASHBOARD && !user) {
+      setCurrentSection(AppSection.HOME);
+      setIsAuthOpen(true);
+    }
+  }, [currentSection, user]);
 
   const renderSection = () => {
     switch (currentSection) {
@@ -21,6 +31,8 @@ const App: React.FC = () => {
         return <ModelGenerator onOpenAuth={() => setIsAuthOpen(true)} />;
       case AppSection.FIRMWARE_GEN:
         return <FirmwareBuilder onOpenAuth={() => setIsAuthOpen(true)} />;
+      case AppSection.DASHBOARD:
+        return <Dashboard />;
       default:
         return <Hero onNavigate={setCurrentSection} />;
     }
