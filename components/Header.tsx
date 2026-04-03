@@ -65,16 +65,18 @@ const Header: React.FC<HeaderProps> = ({ currentSection, onNavigate, onOpenAuth 
               <Globe size={20} />
               <span className="text-sm font-medium uppercase hidden sm:inline">{language}</span>
             </button>
-            <div className="absolute right-0 mt-2 w-32 bg-white rounded-lg shadow-xl border border-slate-100 hidden group-hover:block overflow-hidden p-1">
-              {(['en', 'zh', 'ja', 'es', 'fr'] as Language[]).map((lang) => (
-                <button
-                  key={lang}
-                  onClick={() => setLanguage(lang)}
-                  className={`w-full text-left px-3 py-2 text-sm rounded-md hover:bg-slate-50 ${language === lang ? 'text-emerald-600 font-bold bg-emerald-50' : 'text-slate-600'}`}
-                >
-                  {lang === 'en' ? 'English' : lang === 'zh' ? '中文' : lang === 'ja' ? '日本語' : lang === 'es' ? 'Español' : 'Français'}
-                </button>
-              ))}
+            <div className="absolute right-0 top-full pt-2 w-32 hidden group-hover:block z-50">
+              <div className="bg-white rounded-lg shadow-xl border border-slate-100 overflow-hidden p-1">
+                {(['en', 'zh', 'ja', 'es', 'fr'] as Language[]).map((lang) => (
+                  <button
+                    key={lang}
+                    onClick={() => setLanguage(lang)}
+                    className={`w-full text-left px-3 py-2 text-sm rounded-md hover:bg-slate-50 ${language === lang ? 'text-emerald-600 font-bold bg-emerald-50' : 'text-slate-600'}`}
+                  >
+                    {lang === 'en' ? 'English' : lang === 'zh' ? '中文' : lang === 'ja' ? '日本語' : lang === 'es' ? 'Español' : 'Français'}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -86,16 +88,18 @@ const Header: React.FC<HeaderProps> = ({ currentSection, onNavigate, onOpenAuth 
                   <UserIcon size={18} />
                   <span className="text-xs max-w-[80px] truncate hidden md:inline">{user.email?.split('@')[0]}</span>
                 </button>
-                <div className="absolute right-0 mt-2 w-40 bg-white rounded-lg shadow-xl border border-slate-100 hidden group-hover:block overflow-hidden p-1">
-                  <div className="px-3 py-2 text-xs text-slate-500 border-b border-slate-100 truncate mb-1">
-                    {user.email}
+                <div className="absolute right-0 top-full pt-2 w-40 hidden group-hover:block z-50">
+                  <div className="bg-white rounded-lg shadow-xl border border-slate-100 overflow-hidden p-1">
+                    <div className="px-3 py-2 text-xs text-slate-500 border-b border-slate-100 truncate mb-1">
+                      {user.email}
+                    </div>
+                    <button
+                      onClick={signOut}
+                      className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-rose-50 text-rose-600 flex items-center gap-2"
+                    >
+                      <LogOut size={16} /> Sign Out
+                    </button>
                   </div>
-                  <button
-                    onClick={signOut}
-                    className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-rose-50 text-rose-600 flex items-center gap-2"
-                  >
-                    <LogOut size={16} /> Sign Out
-                  </button>
                 </div>
               </div>
             </div>
