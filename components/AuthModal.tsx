@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
+import { supabase } from '../lib/supabaseClient';
 import { X, Mail, Lock, Loader2 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
-import { useAuth } from '../contexts/AuthContext';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -15,7 +15,6 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { t } = useLanguage();
-  const { signIn, signUp } = useAuth();
 
   if (!isOpen) return null;
 
@@ -26,9 +25,17 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
     try {
       if (isLogin) {
-        await signIn(email);
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (error) throw error;
       } else {
-        await signUp(email);
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+        if (error) throw error;
       }
       onClose();
     } catch (err: any) {

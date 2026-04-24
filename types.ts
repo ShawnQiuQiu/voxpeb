@@ -23,14 +23,16 @@ export enum AppSection {
 
 export interface SpeakingSession {
   id: string;
-  date: string;
+  user_id: string;
+  date: string; // ISO date string
+  task_type: 'Independent' | 'Integrated';
   durationMinutes: number;
-  overallScore: number;
+  overallScore: number; // Scaled 0-30
   metrics: {
-    pronunciation: number;
-    fluency: number;
-    vocabulary: number;
-    grammar: number;
+    delivery: number; // 0-4 raw
+    language_use: number; // 0-4 raw
+    topic_development: number; // 0-4 raw
   };
   feedback: string;
+  transcript: string;
 }
