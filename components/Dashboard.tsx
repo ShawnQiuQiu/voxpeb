@@ -9,57 +9,75 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../contexts/AuthContext';
 
+const mockSessions: SpeakingSession[] = [
+  {
+    id: '1',
+    user_id: 'mock',
+    date: '2026-03-20',
+    task_type: 'Independent',
+    durationMinutes: 15,
+    overallScore: 23,
+    metrics: { delivery: 3, language_use: 3, topic_development: 3 },
+    feedback: 'Good effort! Try to focus on the "th" sound and use more varied vocabulary.',
+    transcript: "I believe that the most important quality for a student is..."
+  },
+  {
+    id: '2',
+    user_id: 'mock',
+    date: '2026-03-22',
+    task_type: 'Integrated',
+    durationMinutes: 20,
+    overallScore: 26,
+    metrics: { delivery: 3.5, language_use: 3.5, topic_development: 3.5 },
+    feedback: 'Excellent fluency today. Your grammar is very solid.',
+    transcript: "According to the reading passage, the university is planning to..."
+  },
+  {
+    id: '3',
+    user_id: 'mock',
+    date: '2026-03-24',
+    task_type: 'Independent',
+    durationMinutes: 12,
+    overallScore: 25,
+    metrics: { delivery: 3.5, language_use: 3.0, topic_development: 3.5 },
+    feedback: 'Slight hesitation in some sentences, but overall very clear.',
+    transcript: "I agree with the statement that universities should..."
+  },
+  {
+    id: '4',
+    user_id: 'mock',
+    date: '2026-03-26',
+    task_type: 'Integrated',
+    durationMinutes: 30,
+    overallScore: 28,
+    metrics: { delivery: 4.0, language_use: 3.5, topic_development: 4.0 },
+    feedback: 'Great improvement in vocabulary usage. Keep it up!',
+    transcript: "The professor in the lecture explains the concept of..."
+  },
+  {
+    id: '5',
+    user_id: 'mock',
+    date: '2026-03-28',
+    task_type: 'Independent',
+    durationMinutes: 25,
+    overallScore: 29,
+    metrics: { delivery: 4.0, language_use: 4.0, topic_development: 3.5 },
+    feedback: 'Outstanding performance. Very natural phrasing.',
+    transcript: "If I had to choose between living in a city or the countryside..."
+  },
+];
+
 const Dashboard: React.FC = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
-  const [sessions, setSessions] = useState<SpeakingSession[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [sessions, setSessions] = useState<SpeakingSession[]>(mockSessions);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    let active = true;
-
-    async function fetchSessions() {
-      if (!user) return;
-      try {
-        const { data, error } = await supabase
-          .from('toefl_sessions')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('date', { ascending: true }); // Get ascending to compute trend charts
-        
-        if (error) {
-          console.error("Error fetching sessions:", error);
-          return;
-        }
-
-        if (active && data) {
-          const formattedData: SpeakingSession[] = data.map((row: any) => ({
-            id: row.id,
-            user_id: row.user_id,
-            date: row.date,
-            task_type: row.task_type,
-            durationMinutes: row.duration_minutes,
-            overallScore: row.overall_score,
-            metrics: {
-              delivery: row.delivery_score,
-              language_use: row.language_use_score,
-              topic_development: row.topic_development_score
-            },
-            feedback: row.feedback,
-            transcript: row.transcript
-          }));
-          setSessions(formattedData);
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        if (active) setLoading(false);
-      }
+    // If you want to fetch real data later, add it here. Currently using mock data.
+    if (user) {
+      setSessions(mockSessions);
     }
-
-    fetchSessions();
-
-    return () => { active = false; };
   }, [user]);
 
   if (loading) {
