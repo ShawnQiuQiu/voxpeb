@@ -99,14 +99,23 @@ const Header: React.FC<HeaderProps> = ({ currentSection, onNavigate, onOpenAuth 
                 </button>
                 <div className="absolute right-0 top-full pt-2 w-40 hidden group-hover:block z-50">
                   <div className="bg-white rounded-lg shadow-xl border border-slate-100 overflow-hidden p-1">
-                    <div className="px-3 py-2 text-xs text-slate-500 border-b border-slate-100 truncate mb-1">
+                    <div className="px-3 py-2 text-xs text-slate-500 border-b border-slate-100 truncate mb-1" title={user.email}>
                       {user.email}
                     </div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(user.id);
+                        alert(language === 'zh' ? '已复制设备 ID (User ID)' : 'Copied Device ID (User ID)');
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-slate-50 text-slate-700 flex items-center gap-2"
+                    >
+                      <UserIcon size={16} /> {language === 'zh' ? '复制设备 ID' : 'Copy Device ID'}
+                    </button>
                     <button
                       onClick={signOut}
                       className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-rose-50 text-rose-600 flex items-center gap-2"
                     >
-                      <LogOut size={16} /> Sign Out
+                      <LogOut size={16} /> {language === 'zh' ? '退出登录' : 'Sign Out'}
                     </button>
                   </div>
                 </div>
