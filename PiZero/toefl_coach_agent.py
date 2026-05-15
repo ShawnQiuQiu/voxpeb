@@ -17,6 +17,8 @@ import json
 import os
 import sys
 import threading
+import struct
+import queue
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -34,7 +36,7 @@ from modules.toefl_knowledge import TOEFLKnowledgeBase
 
 load_dotenv(".env.local")
 
-GEMINI_LIVE_MODEL = "gemini-2.0-flash-exp"
+GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
 DEFAULT_USER_ID = os.getenv("USER_ID", "anonymous")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -89,45 +91,189 @@ class TOEFLSessionBackend:
 
 class AudioDevice:
     """Manages PyAudio for capturing mic and playing speaker audio."""
-    def __init__(self, in_queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
+    def __init__(
+        self,
+        in_queue: asyncio.Queue,
+        loop: asyncio.AbstractEventLoop,
+        input_device_index: Optional[int] = None,
+        output_device_index: Optional[int] = None,
+        input_channels: int = 1,
+        input_rate: int = 16000,
+        input_chunk_ms: int = 40,
+        output_channels: int = 2,
+        mute_input_while_playing: bool = True,
+    ):
         self.p = pyaudio.PyAudio()
         self.in_queue = in_queue
         self.loop = loop
+        self.input_channels = input_channels
+        self.input_rate = input_rate
+        self.input_chunk_frames = max(160, int(input_rate * input_chunk_ms / 1000))
+        self.output_channels = output_channels
+        self.mute_input_while_playing = mute_input_while_playing
+        self.out_queue: queue.Queue[Optional[bytes]] = queue.Queue()
+        self.playing_output = threading.Event()
+        self.closed = False
+        self.mic_thread: Optional[threading.Thread] = None
+        self.speaker_thread: Optional[threading.Thread] = None
         
-        # Capture from Microphone (16kHz PCM mono)
-        self.micro = self.p.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=16000,
-            input=True,
-            frames_per_buffer=2048,
-            stream_callback=self._mic_callback
-        )
-        # Play out to Speaker (24kHz PCM mono from Gemini)
-        self.speaker = self.p.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=24000,
-            output=True,
-            frames_per_buffer=2048
-        )
-
-    def _mic_callback(self, in_data, frame_count, time_info, status):
         try:
-            self.loop.call_soon_threadsafe(self.in_queue.put_nowait, in_data)
-        except Exception:
+            # Capture from Microphone (16kHz PCM mono)
+            self.micro = self.p.open(
+                format=pyaudio.paInt16,
+                channels=input_channels,
+                rate=input_rate,
+                input=True,
+                input_device_index=input_device_index,
+                frames_per_buffer=self.input_chunk_frames,
+            )
+            # Gemini outputs 24kHz PCM mono. Default to stereo output for headphones.
+            self.speaker = self.p.open(
+                format=pyaudio.paInt16,
+                channels=output_channels,
+                rate=24000,
+                output=True,
+                output_device_index=output_device_index,
+                frames_per_buffer=1024
+            )
+            self.mic_thread = threading.Thread(target=self._mic_read_loop, daemon=True)
+            self.speaker_thread = threading.Thread(target=self._speaker_write_loop, daemon=True)
+            self.mic_thread.start()
+            self.speaker_thread.start()
+        except OSError as e:
+            print(f"\n[Error] Failed to initialize audio devices: {e}")
+            print("\nAvailable Audio Devices:")
+            for i in range(self.p.get_device_count()):
+                dev = self.p.get_device_info_by_index(i)
+                input_ch = dev.get('maxInputChannels', 0)
+                output_ch = dev.get('maxOutputChannels', 0)
+                default_rate = dev.get("defaultSampleRate", "?")
+                print(f"Index {i}: {dev['name']} (In: {input_ch}, Out: {output_ch}, Default rate: {default_rate})")
+            print("\nPlease specify correct devices using --input-device, --output-device, and --input-channels arguments.")
+            self.p.terminate()
+            sys.exit(1)
+
+    def _mic_read_loop(self):
+        while not self.closed:
+            try:
+                data = self.micro.read(self.input_chunk_frames, exception_on_overflow=False)
+                if self.mute_input_while_playing and self.playing_output.is_set():
+                    continue
+                self.loop.call_soon_threadsafe(self._enqueue_audio, self._to_mono(data))
+            except OSError as e:
+                if not self.closed:
+                    print(f"\n[Audio input error] {e}")
+                break
+            except Exception as e:
+                if not self.closed:
+                    print(f"\n[Audio input thread error] {e}")
+                break
+
+    def _enqueue_audio(self, data: bytes):
+        try:
+            self.in_queue.put_nowait(data)
+        except asyncio.QueueFull:
             pass
-        return (None, pyaudio.paContinue)
+
+    def _to_mono(self, data: bytes) -> bytes:
+        if self.input_channels == 1:
+            return data
+        if self.input_channels == 2:
+            return self._stereo_to_mono(data)
+        return self._first_channel_to_mono(data)
+
+    def _stereo_to_mono(self, data: bytes) -> bytes:
+        output = bytearray()
+        frame_size = 4
+        for offset in range(0, len(data) - frame_size + 1, frame_size):
+            left, right = struct.unpack_from("<hh", data, offset)
+            mixed = int((left + right) / 2)
+            output.extend(struct.pack("<h", mixed))
+        return bytes(output)
+
+    def _first_channel_to_mono(self, data: bytes) -> bytes:
+        output = bytearray()
+        frame_size = self.input_channels * 2
+        for offset in range(0, len(data) - frame_size + 1, frame_size):
+            sample = struct.unpack_from("<h", data, offset)[0]
+            output.extend(struct.pack("<h", sample))
+        return bytes(output)
 
     def play(self, data: bytes):
-        if self.speaker and self.speaker.is_active():
-            self.speaker.write(data)
+        if self.closed:
+            return
+        self.out_queue.put(data)
+
+    def clear_output(self):
+        while True:
+            try:
+                self.out_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def _speaker_write_loop(self):
+        while not self.closed:
+            try:
+                data = self.out_queue.get(timeout=0.1)
+            except queue.Empty:
+                self.playing_output.clear()
+                continue
+
+            if data is None:
+                self.playing_output.clear()
+                continue
+
+            try:
+                self.playing_output.set()
+                self.speaker.write(self._format_output(data))
+            except OSError as e:
+                if not self.closed:
+                    print(f"\n[Audio output error] {e}")
+                break
+            except Exception as e:
+                if not self.closed:
+                    print(f"\n[Audio output thread error] {e}")
+                break
+
+    def _format_output(self, data: bytes) -> bytes:
+        if self.output_channels == 1:
+            return data
+        if self.output_channels == 2:
+            return self._mono_to_stereo(data)
+        return self._mono_to_n_channels(data, self.output_channels)
+
+    def _mono_to_stereo(self, data: bytes) -> bytes:
+        output = bytearray()
+        for offset in range(0, len(data) - 1, 2):
+            sample = data[offset:offset + 2]
+            output.extend(sample)
+            output.extend(sample)
+        return bytes(output)
+
+    def _mono_to_n_channels(self, data: bytes, channels: int) -> bytes:
+        output = bytearray()
+        for offset in range(0, len(data) - 1, 2):
+            sample = data[offset:offset + 2]
+            for _ in range(channels):
+                output.extend(sample)
+        return bytes(output)
 
     def close(self):
-        self.micro.stop_stream()
-        self.speaker.stop_stream()
-        self.micro.close()
-        self.speaker.close()
+        self.closed = True
+        self.out_queue.put(None)
+        if self.mic_thread and self.mic_thread.is_alive():
+            self.mic_thread.join(timeout=1)
+        if self.speaker_thread and self.speaker_thread.is_alive():
+            self.speaker_thread.join(timeout=1)
+        for stream in (getattr(self, "micro", None), getattr(self, "speaker", None)):
+            if not stream:
+                continue
+            try:
+                if stream.is_active():
+                    stream.stop_stream()
+                stream.close()
+            except Exception:
+                pass
         self.p.terminate()
 
 
@@ -282,18 +428,36 @@ Important:
         return max(0, min(30, round((average_score / 4.0) * 30)))
 
 
-async def run_client():
+async def run_client(
+    input_device: Optional[int] = None,
+    output_device: Optional[int] = None,
+    input_channels: int = 1,
+    input_rate: int = 16000,
+    input_chunk_ms: int = 40,
+    output_channels: int = 2,
+    mute_input_while_playing: bool = True,
+):
     if not GEMINI_API_KEY:
-        print("Mssing GEMINI_API_KEY environment variable.")
+        print("Missing GEMINI_API_KEY environment variable.")
         return
 
     agent = TOEFLCoachAgent(user_id=DEFAULT_USER_ID)
     loop = asyncio.get_running_loop()
-    in_queue = asyncio.Queue()
-    audio_dev = AudioDevice(in_queue, loop)
+    in_queue = asyncio.Queue(maxsize=10)
+    audio_dev = AudioDevice(
+        in_queue,
+        loop,
+        input_device_index=input_device,
+        output_device_index=output_device,
+        input_channels=input_channels,
+        input_rate=input_rate,
+        input_chunk_ms=input_chunk_ms,
+        output_channels=output_channels,
+        mute_input_while_playing=mute_input_while_playing,
+    )
 
     host = "generativelanguage.googleapis.com"
-    ws_url = f"wss://{host}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key={GEMINI_API_KEY}"
+    ws_url = f"wss://{host}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={GEMINI_API_KEY}"
 
     setup_payload = {
         "setup": {
@@ -309,6 +473,8 @@ async def run_client():
             "systemInstruction": {
                 "parts": [{"text": agent.get_system_instructions()}]
             },
+            "inputAudioTranscription": {},
+            "outputAudioTranscription": {},
             "tools": [
                 {
                     "functionDeclarations": [
@@ -342,28 +508,41 @@ async def run_client():
         async with websockets.connect(ws_url) as ws:
             print("=> Connected to Gemini Live API over WebSockets")
             await ws.send(json.dumps(setup_payload))
-            print("=> Sent agent setup payload. You can now start speaking...\n")
+            print("=> Sent agent setup payload.")
+
+            setup_response = json.loads(await ws.recv())
+            if "error" in setup_response:
+                print(f"=> Gemini setup error: {setup_response['error']}")
+                return
+            print("=> Gemini setup complete. You can now start speaking...\n")
 
             # Initial turn
             await ws.send(json.dumps({
                 "clientContent": {
-                    "turns": [{"parts": [{"text": "Hello! I'm ready to practice TOEFL speaking."}]}],
+                    "turns": [
+                        {
+                            "role": "user",
+                            "parts": [{"text": "Hello! I'm ready to practice TOEFL speaking."}]
+                        }
+                    ],
                     "turnComplete": True
                 }
             }))
 
             async def send_mic_loop():
                 while True:
-                    data = await in_queue.get()
+                    try:
+                        data = await asyncio.wait_for(in_queue.get(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
+
                     # Send raw PCM 16kHz audio out to Gemini
                     msg = {
                         "realtimeInput": {
-                            "mediaChunks": [
-                                {
-                                    "mimeType": "audio/pcm;rate=16000",
-                                    "data": base64.b64encode(data).decode('ascii')
-                                }
-                            ]
+                            "audio": {
+                                "mimeType": f"audio/pcm;rate={input_rate}",
+                                "data": base64.b64encode(data).decode("ascii"),
+                            }
                         }
                     }
                     await ws.send(json.dumps(msg))
@@ -375,6 +554,22 @@ async def run_client():
                         data = json.loads(resp)
                         if "serverContent" in data:
                             content = data["serverContent"]
+
+                            if content.get("interrupted"):
+                                print("\n[Gemini interrupted: clearing local playback]")
+                                audio_dev.clear_output()
+                                continue
+
+                            if content.get("generationComplete"):
+                                audio_dev.playing_output.clear()
+
+                            input_transcription = content.get("inputTranscription")
+                            if input_transcription and input_transcription.get("text"):
+                                print(f"\n[Heard] {input_transcription['text']}")
+
+                            output_transcription = content.get("outputTranscription")
+                            if output_transcription and output_transcription.get("text"):
+                                print(f"\n[Coach transcript] {output_transcription['text']}")
                             
                             # Log basic text to console
                             model_turn = content.get("modelTurn")
@@ -388,43 +583,10 @@ async def run_client():
                                         # Audio from Gemini
                                         b64 = part["inlineData"].get("data")
                                         if b64:
-                                            # Execute blocking audio in thread
-                                            loop.run_in_executor(None, audio_dev.play, base64.b64decode(b64))
+                                            audio_dev.play(base64.b64decode(b64))
 
-                                    if "functionCall" in part:
-                                        call = part["functionCall"]
-                                        name = call.get("name")
-                                        args = call.get("args", {})
-                                        call_id = call.get("id", "")
-                                        
-                                        print(f"\n\n[Agent executing tool: {name}]")
-                                        result_str = ""
-                                        
-                                        if name == "start_toefl_practice":
-                                            result_str = await agent.start_toefl_practice(args.get("task_type", "random"))
-                                        elif name == "evaluate_response":
-                                            print(f"-> Evaluating transcript:\n'{args.get('response_text')}'")
-                                            result_str = await agent.evaluate_response(
-                                                args.get("response_text", ""),
-                                                args.get("audio_duration", 0)
-                                            )
-                                            
-                                        # Provide result back to agent
-                                        tool_resp = {
-                                            "clientContent": {
-                                                "turns": [{
-                                                    "parts": [{
-                                                        "functionResponse": {
-                                                            "name": name,
-                                                            "id": call_id,
-                                                            "response": {"result": result_str}
-                                                        }
-                                                    }]
-                                                }],
-                                                "turnComplete": True
-                                            }
-                                        }
-                                        await ws.send(json.dumps(tool_resp))
+                        if "toolCall" in data:
+                            await handle_tool_call(ws, data["toolCall"], agent)
                                         
                     except websockets.exceptions.ConnectionClosed:
                         print("\n=> Connection closed by server.")
@@ -438,14 +600,84 @@ async def run_client():
         audio_dev.close()
         print("Cleaned up audio devices.")
 
+
+def list_audio_devices() -> None:
+    p = pyaudio.PyAudio()
+    try:
+        print("Available Audio Devices:")
+        for i in range(p.get_device_count()):
+            dev = p.get_device_info_by_index(i)
+            input_ch = dev.get("maxInputChannels", 0)
+            output_ch = dev.get("maxOutputChannels", 0)
+            print(f"Index {i}: {dev['name']} (In: {input_ch}, Out: {output_ch})")
+    finally:
+        p.terminate()
+
+
+async def handle_tool_call(ws, tool_call: Dict[str, Any], agent: TOEFLCoachAgent) -> None:
+    function_responses = []
+    for call in tool_call.get("functionCalls", []):
+        name = call.get("name")
+        args = call.get("args", {})
+        call_id = call.get("id", "")
+
+        print(f"\n\n[Agent executing tool: {name}]")
+
+        try:
+            if name == "start_toefl_practice":
+                result = await agent.start_toefl_practice(args.get("task_type", "random"))
+            elif name == "evaluate_response":
+                print(f"-> Evaluating transcript:\n'{args.get('response_text')}'")
+                result = await agent.evaluate_response(
+                    args.get("response_text", ""),
+                    args.get("audio_duration", 0),
+                )
+            else:
+                result = f"Unknown tool: {name}"
+        except Exception as exc:
+            result = f"Tool execution failed: {exc}"
+
+        function_responses.append({
+            "name": name,
+            "id": call_id,
+            "response": {"result": result},
+        })
+
+    if function_responses:
+        await ws.send(json.dumps({
+            "toolResponse": {
+                "functionResponses": function_responses,
+            }
+        }))
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Voxpeb TOEFL Speaking Coach")
     parser.add_argument("--user", type=str, default=DEFAULT_USER_ID, help="Supabase user id")
+    parser.add_argument("--input-device", type=int, default=None, help="Input device index for PyAudio")
+    parser.add_argument("--output-device", type=int, default=None, help="Output device index for PyAudio")
+    parser.add_argument("--input-channels", type=int, default=1, help="Input channel count. ReSpeaker 2-Mics HAT often needs 2.")
+    parser.add_argument("--input-rate", type=int, default=16000, help="Input sample rate in Hz")
+    parser.add_argument("--input-chunk-ms", type=int, default=40, help="Microphone chunk size in milliseconds. Gemini recommends 20-40.")
+    parser.add_argument("--output-channels", type=int, default=2, help="Output channel count. Use 2 for headphones, 1 for mono speakers.")
+    parser.add_argument("--full-duplex", action="store_true", help="Keep sending microphone audio while the model is speaking.")
+    parser.add_argument("--list-devices", action="store_true", help="List PyAudio input/output devices and exit")
     args = parser.parse_args()
 
     os.environ["USER_ID"] = args.user
 
+    if args.list_devices:
+        list_audio_devices()
+        sys.exit(0)
+
     try:
-        asyncio.run(run_client())
+        asyncio.run(run_client(
+            input_device=args.input_device,
+            output_device=args.output_device,
+            input_channels=args.input_channels,
+            input_rate=args.input_rate,
+            input_chunk_ms=args.input_chunk_ms,
+            output_channels=args.output_channels,
+            mute_input_while_playing=not args.full_duplex,
+        ))
     except KeyboardInterrupt:
         print("\nExiting...")
